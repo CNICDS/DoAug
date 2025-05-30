@@ -1,0 +1,15 @@
+{
+  "paraphrase_sft_100k_100k": {
+    "file_name": "paraphrase_sft_100k_100k.json"
+  },
+  "paraphrase_dpo_100k_100k": {
+    "file_name": "paraphrase_dpo_100k_100k.json",
+    "ranking": true,
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "chosen": "chosen",
+      "rejected": "rejected"
+    }
+  }
+}
