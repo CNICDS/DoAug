@@ -53,19 +53,6 @@ def calculate_homogeneity(embeddings):
 def preprocess(text):
     text = text.lower().replace('.', '').replace(',', '').replace('?', '').replace('!', '')
     return text.split()
-def safe_sqrtm(matrix, epsilon=1e-6):
-    """Compute real matrix square root using eigendecomposition to avoid complex numbers."""
-    # Ensure matrix is symmetric (for numerical stability)
-    matrix = (matrix + matrix.T) / 2
-    # Eigendecomposition
-    eigenvalues, eigenvectors = torch.linalg.eigh(matrix)
-    # Clamp eigenvalues to avoid negative values (due to numerical errors)
-    eigenvalues = torch.clamp(eigenvalues, min=epsilon)
-    # Compute sqrt of eigenvalues
-    sqrt_eigenvalues = torch.sqrt(eigenvalues)
-    # Reconstruct sqrt matrix
-    sqrt_matrix = eigenvectors @ torch.diag_embed(sqrt_eigenvalues) @ eigenvectors.T
-    return sqrt_matrix
 
 RESULTS_DIR = f"results/diversity"
 if not os.path.exists(RESULTS_DIR):
@@ -90,14 +77,6 @@ if os.path.exists(f"{RESULTS_DIR}/class_affinity.csv"):
     df_class_affinity = pd.read_csv(f"{RESULTS_DIR}/class_affinity.csv", index_col=0)
 else:
     df_class_affinity = pd.DataFrame(columns=SPLITS)
-if os.path.exists(f"{RESULTS_DIR}/class_fbd.csv"):
-    df_class_fbd = pd.read_csv(f"{RESULTS_DIR}/class_fbd.csv", index_col=0)
-else:
-    df_class_fbd = pd.DataFrame(columns=SPLITS)
-if os.path.exists(f"{RESULTS_DIR}/class_fbd_asym.csv"):
-    df_class_fbd_asym = pd.read_csv(f"{RESULTS_DIR}/class_fbd_asym.csv", index_col=0)
-else:
-    df_class_fbd_asym = pd.DataFrame(columns=SPLITS)
 if os.path.exists(f"{RESULTS_DIR}/class_distance.csv"):
     df_class_distance = pd.read_csv(f"{RESULTS_DIR}/class_distance.csv", index_col=0)
 else:
@@ -146,11 +125,9 @@ for split in USED_SPLITS:
 # %% embed samples, and arrange samples and centers by class 
 split_class_samples = {} # key: split, value: dict of class samples
 split_class_centers = {} # key: split, value: dict of class centers
-split_class_covaris = {} # key: split, value: dict of class covariance
 for split in USED_SPLITS:
     class_samples = {} # key: class, value: a tensor of N*H where N is the number of samples in a class and H is the hidden size
     class_centers = {} # key: class, value: a tensor of center of the class
-    class_covaris = {} # key: class, value: a tensor of covariance of the class
     print(f"embedding for {split}")
     split_embeddings = torch.tensor([], device="cuda")
     loader = DataLoader(tensor_dataset[split], batch_size=16)
@@ -167,10 +144,8 @@ for split in USED_SPLITS:
                 class_samples[label] = torch.cat((class_samples[label], embeddings[sample_idx].unsqueeze(0)))
     for label in class_samples:
         class_centers[label] = class_samples[label].mean(dim=0).unsqueeze(0)
-        class_covaris[label] = torch.cov(class_samples[label].T) + torch.eye(class_samples[label].size(1)).to("cuda") * 1e-6
     split_class_samples[split] = class_samples
     split_class_centers[split] = class_centers
-    split_class_covaris[split] = class_covaris
 # %% calculate diversity metrics
 for split in USED_SPLITS:
     print(f"Computing diversity for {split}")
@@ -185,7 +160,6 @@ for split in USED_SPLITS:
         embed_std = (torch.prod(torch.std(samples, dim=1)) ** (1 / samples.size(0))).cpu().item()
         if embed_std == 0: # if zero, use arithmetic mean (probably due to precision error)
             embed_std = torch.std(samples, dim=1).mean().cpu().item()
-            # print("emmmmmmmm")
         homogeneity = calculate_homogeneity(samples)
         
         class_avg_distances.append(avg_distance)
@@ -207,8 +181,6 @@ for split in USED_SPLITS:
     print(f"Computing affinity for {split}")
     # set to 0, use +=, and /len() is equal to set to [], use append, and mean
     deviation = 0
-    fbd = 0
-    fbd_asym = 0
     if split in ['dpo_d', 'dpo_s', 'sft_d', 'sft_s', 'wo_coreset_dpo_d', 'wo_selective_dpo_d', '10k', '20k', '50k', '100k', 't1.2', 'prompt']:
         ref_split = f'{CORESET_KEY}_top_2_3'
     else: 
@@ -217,27 +189,8 @@ for split in USED_SPLITS:
     for label in split_class_centers[split]:
         ## affinity
         deviation += torch.norm(split_class_centers[split][label] - split_class_centers[ref_split][label])
-        ## fbd
-        mean_diff = split_class_centers[split][label] - split_class_centers[ref_split][label]
-        mean_term = torch.sum(mean_diff ** 2)
-        sqrt_ref_cov = safe_sqrtm(split_class_covaris[ref_split][label])
-        M = sqrt_ref_cov @ split_class_covaris[split][label] @ sqrt_ref_cov
-        sqrt_M = safe_sqrtm(M)
-        cov_term = torch.trace(split_class_covaris[ref_split][label] + split_class_covaris[split][label] - 2 * sqrt_M)
-        fbd += torch.sqrt(mean_term + cov_term)
-        ## fbd asymmetry
-        cov_diff = split_class_covaris[split][label] - split_class_covaris[ref_split][label]
-        cov_diff = torch.clamp(cov_diff, min=0)
-        cov_term = torch.trace(cov_diff)
-        fbd_asym += torch.sqrt(mean_term + cov_term)
     deviation /= len(split_class_centers[split])
     affinity = 1 / deviation
-    fbd /= len(split_class_centers[split])
-    fbd_asym /= len(split_class_centers[split])
     df_class_affinity.loc[DATASET_NAME, split] = round(affinity.item(), 6)
     df_class_affinity.to_csv(f"{RESULTS_DIR}/class_affinity.csv")
-    df_class_fbd.loc[DATASET_NAME, split] = round(fbd.item(), 6)
-    df_class_fbd.to_csv(f"{RESULTS_DIR}/class_fbd.csv")
-    df_class_fbd_asym.loc[DATASET_NAME, split] = round(fbd_asym.item(), 6)
-    df_class_fbd_asym.to_csv(f"{RESULTS_DIR}/class_fbd_asym.csv")
 
