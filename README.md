@@ -8,6 +8,8 @@ TL;DR: We fine-tune an LLM to generate diverse paraphrases for textual data augm
 
 The paper is available at [arXiv](https://arxiv.org/abs/2502.11671).
 
+![](assets/doaug_abs.png)
+
 ## Run Commands
 
 1. prepare paraphrase dataset
