@@ -1,0 +1,13 @@
+### Note: DO NOT use quantized model or quantization_bit when merging lora adapters
+
+### model
+model_name_or_path: ../llm-base/meta-llama/Llama-3.2-1B-Instruct
+adapter_name_or_path: saves/llama3.2-1b/lora/sft/paraphrase_sft_100k_100k
+template: llama3
+finetuning_type: lora
+
+### export
+export_dir: models/llama_paraphraser_sft_100k_100k
+export_size: 2
+export_device: cpu
+export_legacy_format: false
